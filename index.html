@@ -109,6 +109,7 @@
   <div class="tabs">
     <button class="tab-btn active" id="tabDay">Day view</button>
     <button class="tab-btn" id="tabMonth">Month view</button>
+    <button class="tab-btn" id="tabYear">Year view</button>
   </div>
 
   <div id="dayPanel">
@@ -160,6 +161,28 @@
     <div class="card">
       <h2>By payment mode</h2>
       <div id="monthPaymentMode"></div>
+    </div>
+  </div>
+
+  <div id="yearPanel" style="display:none;">
+    <div class="date-nav">
+      <button id="yearPrev">‹</button>
+      <div style="flex:1; text-align:center; font-size:16px; font-weight:600;" id="yearLabel"></div>
+      <button id="yearNext">›</button>
+    </div>
+    <div class="total-banner">
+      <div>
+        <div class="label">Total this year</div>
+        <div class="value" id="yearTotal">₹0</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>By month</h2>
+      <canvas class="trend-canvas" id="yearMonthlyChart"></canvas>
+    </div>
+    <div class="card">
+      <h2>Top categories</h2>
+      <div id="yearCategory"></div>
     </div>
   </div>
 

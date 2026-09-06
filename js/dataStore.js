@@ -339,6 +339,30 @@ async function getMonth(month) {
   };
 }
 
+async function getYear(year) {
+  const y = year || new Date().getFullYear();
+  const all = await allExpensesForUser();
+  const expenses = all.filter((e) => e.spent_date.startsWith(`${y}-`));
+
+  const monthly = {};
+  for (let m = 1; m <= 12; m++) monthly[`${y}-${String(m).padStart(2, "0")}`] = 0;
+  const byCategory = {};
+  for (const e of expenses) {
+    const m = e.spent_date.slice(0, 7);
+    if (m in monthly) monthly[m] += e.amount;
+    byCategory[e.category] = (byCategory[e.category] || 0) + e.amount;
+  }
+  const round2 = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, Math.round(v * 100) / 100]));
+  const sortByValueDesc = (obj) => Object.fromEntries(Object.entries(obj).sort((a, b) => b[1] - a[1]));
+  const total = expenses.reduce((s, e) => s + e.amount, 0);
+
+  return {
+    year: y, total: Math.round(total * 100) / 100,
+    monthly_totals: round2(monthly),
+    by_category: round2(sortByValueDesc(byCategory)),
+  };
+}
+
 async function getTrend(monthsBack) {
   const n = monthsBack || 6;
   const all = await allExpensesForUser();
@@ -434,7 +458,7 @@ async function exportAll() {
 
 window.DataStore = {
   signup, login, logout, currentUser, resetPassword,
-  addExpense, updateExpense, deleteExpense, getDay, getMonth, getTrend, getFrequent,
+  addExpense, updateExpense, deleteExpense, getDay, getMonth, getYear, getTrend, getFrequent,
   rememberCategory, recallCategory,
   setBudget, deleteBudget, getBudgets, TOTAL_BUDGET_CATEGORY,
   lastEmail, quickUnlockInfo, setPin, clearPin, quickUnlockWithPin,

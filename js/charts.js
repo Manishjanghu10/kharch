@@ -53,11 +53,14 @@ function drawDonut(canvas, entries) {
   ctx.fillText("₹" + Math.round(total).toLocaleString("en-IN"), cx, cy + 10);
 }
 
-// entries: [{label, value}], oldest first
-function drawTrendBars(canvas, entries) {
+// entries: [{label, value}], oldest first. highlightIndex defaults to the
+// last bar (used by the "last 6 months ending now" trend); pass -1 for no
+// highlight, or a specific index (e.g. the current month within a year).
+function drawTrendBars(canvas, entries, highlightIndex) {
   const { ctx, w, h } = fitCanvas(canvas);
   if (w <= 0 || h <= 0) return;
   ctx.clearRect(0, 0, w, h);
+  const highlight = highlightIndex === undefined ? entries.length - 1 : highlightIndex;
   const max = Math.max(1, ...entries.map((e) => e.value));
   const padBottom = 22, padTop = 16, padSide = 8;
   const plotH = h - padBottom - padTop;
@@ -68,7 +71,7 @@ function drawTrendBars(canvas, entries) {
     const cx = padSide + slotW * i + slotW / 2;
     const barH = (e.value / max) * plotH;
     const y = padTop + (plotH - barH);
-    ctx.fillStyle = i === entries.length - 1 ? "#22c55e" : "rgba(34,197,94,0.45)";
+    ctx.fillStyle = i === highlight ? "#22c55e" : "rgba(34,197,94,0.45)";
     ctx.beginPath();
     const r = Math.min(6, barW / 2);
     ctx.moveTo(cx - barW / 2, y + barH);

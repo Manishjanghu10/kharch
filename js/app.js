@@ -448,15 +448,17 @@ async function deleteExpense(id) {
 }
 
 // ---------- tabs ----------
-$('tabDay').addEventListener('click', () => {
-  $('tabDay').classList.add('active'); $('tabMonth').classList.remove('active');
-  $('dayPanel').style.display = 'block'; $('monthPanel').style.display = 'none';
-});
-$('tabMonth').addEventListener('click', () => {
-  $('tabMonth').classList.add('active'); $('tabDay').classList.remove('active');
-  $('monthPanel').style.display = 'block'; $('dayPanel').style.display = 'none';
-  loadMonth();
-});
+function setActiveTab(tab) {
+  $('tabDay').classList.toggle('active', tab === 'day');
+  $('tabMonth').classList.toggle('active', tab === 'month');
+  $('tabYear').classList.toggle('active', tab === 'year');
+  $('dayPanel').style.display = tab === 'day' ? 'block' : 'none';
+  $('monthPanel').style.display = tab === 'month' ? 'block' : 'none';
+  $('yearPanel').style.display = tab === 'year' ? 'block' : 'none';
+}
+$('tabDay').addEventListener('click', () => setActiveTab('day'));
+$('tabMonth').addEventListener('click', () => { setActiveTab('month'); loadMonth(); });
+$('tabYear').addEventListener('click', () => { setActiveTab('year'); loadYear(); });
 
 // ---------- day view ----------
 $('dayPicker').value = todayStr();
@@ -594,6 +596,28 @@ $('monthNext').addEventListener('click', () => {
   $('monthPicker').value = `${nd.getFullYear()}-${String(nd.getMonth() + 1).padStart(2, '0')}`;
   loadMonth();
 });
+
+// ---------- year view ----------
+let currentYear = new Date().getFullYear();
+function monthShortFromNum(m) { return new Date(2000, m - 1, 1).toLocaleDateString('en-US', { month: 'short' }); }
+
+async function loadYear() {
+  const data = await DataStore.getYear(currentYear);
+  $('yearLabel').textContent = String(currentYear);
+  $('yearTotal').textContent = fmtMoney(data.total);
+
+  const entries = Object.entries(data.monthly_totals).map(([m, v]) => ({ label: monthShortFromNum(+m.slice(5)), value: v }));
+  const thisYear = new Date().getFullYear();
+  const highlightIndex = currentYear === thisYear ? new Date().getMonth() : -1;
+  Charts.drawTrendBars($('yearMonthlyChart'), entries, highlightIndex);
+
+  $('yearCategory').innerHTML = Object.entries(data.by_category).length
+    ? Object.entries(data.by_category).map(([c, v]) => `
+        <div class="breakdown-row"><span>${escapeHtml(c)}</span><span>${fmtMoney(v)}</span></div>`).join('')
+    : '<div class="empty">No data yet.</div>';
+}
+$('yearPrev').addEventListener('click', () => { currentYear -= 1; loadYear(); });
+$('yearNext').addEventListener('click', () => { currentYear += 1; loadYear(); });
 
 // ---------- init ----------
 window.startEditById = startEditById;
