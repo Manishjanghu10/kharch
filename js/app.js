@@ -50,8 +50,9 @@ const DEFAULT_MIC_HINT = 'Tap the mic and say it, or type it, then tap Parse. Yo
 // ---------- auth bootstrap ----------
 async function checkAuth() {
   const user = await DataStore.currentUser();
-  if (!user) { window.location.href = 'login.html'; return; }
+  if (!user) { window.location.href = 'login.html'; return false; }
   $('userName').textContent = user.name;
+  return true;
 }
 
 $('logoutBtn').addEventListener('click', () => {
@@ -598,4 +599,4 @@ $('monthNext').addEventListener('click', () => {
 window.startEditById = startEditById;
 window.deleteExpense = deleteExpense;
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
-checkAuth().then(() => { loadDay(); loadMonth(); renderChips(); });
+checkAuth().then((loggedIn) => { if (loggedIn) { loadDay(); loadMonth(); renderChips(); } });
