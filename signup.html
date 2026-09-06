@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Sign up - Kharch</title>
+<meta name="theme-color" content="#0f1512">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kharch">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <h1>Create your Kharch</h1>
+  <p class="sub">Everything stays on this device -- no server, no account in the cloud.</p>
+  <div class="card">
+    <label for="name">Name</label>
+    <input type="text" id="name" autocomplete="name" placeholder="Your name">
+
+    <label for="email">Email</label>
+    <input type="email" id="email" autocomplete="email" placeholder="you@example.com">
+
+    <label for="phone">Phone number</label>
+    <input type="tel" id="phone" autocomplete="tel" placeholder="+91 98765 43210">
+
+    <label for="password">Password</label>
+    <input type="password" id="password" autocomplete="new-password" placeholder="At least 8 characters">
+
+    <button class="btn-primary" id="signupBtn">Sign up</button>
+    <div class="error" id="error"></div>
+  </div>
+  <p class="sub" style="text-align:center">Already set up on this device? <a class="btn-link" href="login.html">Log in</a></p>
+</div>
+<script src="js/crypto.js"></script>
+<script src="js/dataStore.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const errorEl = $('error');
+
+$('signupBtn').addEventListener('click', async () => {
+  errorEl.textContent = '';
+  $('signupBtn').disabled = true;
+  try {
+    const result = await DataStore.signup({
+      name: $('name').value,
+      email: $('email').value,
+      phone: $('phone').value,
+      password: $('password').value,
+    });
+    if (!result.ok) throw new Error(result.error);
+    window.location.href = 'index.html';
+  } catch (e) {
+    errorEl.textContent = e.message;
+    $('signupBtn').disabled = false;
+  }
+});
+
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+</script>
+</body>
+</html>

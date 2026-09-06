@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Log in - Kharch</title>
+<meta name="theme-color" content="#0f1512">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kharch">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <h1>Welcome back</h1>
+  <p class="sub">Log in to see your spends on this device.</p>
+  <div class="card">
+    <label for="email">Email</label>
+    <input type="email" id="email" autocomplete="email" placeholder="you@example.com">
+
+    <label for="password">Password</label>
+    <input type="password" id="password" autocomplete="current-password" placeholder="Your password">
+
+    <button class="btn-primary" id="loginBtn">Log in</button>
+    <div class="error" id="error"></div>
+  </div>
+  <p class="sub" style="text-align:center">New on this device? <a class="btn-link" href="signup.html">Create an account</a></p>
+</div>
+<script src="js/crypto.js"></script>
+<script src="js/dataStore.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const errorEl = $('error');
+
+async function doLogin() {
+  errorEl.textContent = '';
+  $('loginBtn').disabled = true;
+  try {
+    const result = await DataStore.login({ email: $('email').value, password: $('password').value });
+    if (!result.ok) throw new Error(result.error);
+    window.location.href = 'index.html';
+  } catch (e) {
+    errorEl.textContent = e.message;
+    $('loginBtn').disabled = false;
+  }
+}
+
+$('loginBtn').addEventListener('click', doLogin);
+$('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+</script>
+</body>
+</html>
