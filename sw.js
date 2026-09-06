@@ -1,17 +1,19 @@
 /* App-shell service worker: caches everything needed to run with no
    network at all after the first visit. Cache-first, with a background
    refresh from the network when available. */
-const CACHE_NAME = 'kharch-v1';
+const CACHE_NAME = 'kharch-v2';
 const PRECACHE = [
   'index.html',
   'login.html',
   'signup.html',
+  'reset.html',
   'style.css',
   'manifest.json',
   'js/app.js',
   'js/dataStore.js',
   'js/parser.js',
   'js/crypto.js',
+  'js/pwToggle.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',

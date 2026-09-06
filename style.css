@@ -50,6 +50,26 @@ button { cursor: pointer; border: none; border-radius: 10px; padding: 12px 16px;
 .btn-link { background: none; color: var(--accent); text-decoration: none; font-weight: 600; }
 
 .error { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 16px; }
+.info { color: var(--accent); font-size: 13px; margin-top: 10px; min-height: 16px; }
+
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 44px; }
+.pw-toggle {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px; padding: 0; background: transparent; border: none;
+  display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+}
+.pw-toggle:hover { color: var(--text); }
+.pw-toggle svg { width: 20px; height: 20px; }
+
+.recovery-box {
+  background: var(--panel-2); border: 1px dashed var(--accent); border-radius: 10px;
+  padding: 14px; margin: 14px 0; text-align: center;
+}
+.recovery-box .code {
+  font-family: "SF Mono", Consolas, monospace; font-size: 18px; letter-spacing: 1px;
+  color: var(--accent); font-weight: 700; margin: 8px 0; word-break: break-all;
+}
 
 .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
 .top-bar .who { font-size: 13px; color: var(--text-dim); }

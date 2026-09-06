@@ -45,6 +45,20 @@ function reqToPromise(req) {
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const PHONE_RE = /^[0-9+\-\s]{7,15}$/;
 
+// Unambiguous alphabet (no 0/O/1/I/l) for recovery keys shown to a human.
+const RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+function generateRecoveryCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let chars = "";
+  for (const b of bytes) chars += RECOVERY_ALPHABET[b % RECOVERY_ALPHABET.length];
+  return chars.match(/.{1,4}/g).join("-"); // e.g. ABCD-EFGH-JKMN-PQRS
+}
+
+function normalizeRecoveryCode(code) {
+  return (code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -66,10 +80,46 @@ async function signup({ name, email, phone, password }) {
   if (existing) return { ok: false, error: "An account with this email already exists on this device." };
 
   const { saltB64, hashB64 } = await Crypto.hashPassword(password);
-  const user = { email, name, phone, saltB64, hashB64, createdAt: new Date().toISOString() };
+  const recoveryCode = generateRecoveryCode();
+  const recovery = await Crypto.hashPassword(normalizeRecoveryCode(recoveryCode));
+  const user = {
+    email, name, phone, saltB64, hashB64,
+    recoverySaltB64: recovery.saltB64, recoveryHashB64: recovery.hashB64,
+    createdAt: new Date().toISOString(),
+  };
   await reqToPromise(tx(db, "users", "readwrite").objectStore("users").add(user));
   localStorage.setItem(SESSION_KEY, email);
-  return { ok: true };
+  return { ok: true, recoveryCode };
+}
+
+async function resetPassword({ email, recoveryCode, newPassword }) {
+  email = (email || "").trim().toLowerCase();
+  const code = normalizeRecoveryCode(recoveryCode);
+  if (!newPassword || newPassword.length < 8) {
+    return { ok: false, error: "New password must be at least 8 characters." };
+  }
+  const db = await openDb();
+  // Read-only lookup first; IndexedDB transactions auto-close across the
+  // await Crypto.* calls below (they're not IDB operations), so the write
+  // further down deliberately opens a brand-new transaction of its own
+  // rather than reusing this one.
+  const user = await reqToPromise(tx(db, "users", "readonly").objectStore("users").get(email));
+  const badKey = { ok: false, error: "No account with that email and recovery key was found on this device." };
+  if (!user || !user.recoverySaltB64 || !user.recoveryHashB64) return badKey;
+
+  const valid = await Crypto.verifyPassword(code, user.recoverySaltB64, user.recoveryHashB64);
+  if (!valid) return badKey;
+
+  const { saltB64, hashB64 } = await Crypto.hashPassword(newPassword);
+  const newRecoveryCode = generateRecoveryCode(); // recovery keys are single-use
+  const newRecovery = await Crypto.hashPassword(normalizeRecoveryCode(newRecoveryCode));
+  user.saltB64 = saltB64;
+  user.hashB64 = hashB64;
+  user.recoverySaltB64 = newRecovery.saltB64;
+  user.recoveryHashB64 = newRecovery.hashB64;
+  await reqToPromise(tx(db, "users", "readwrite").objectStore("users").put(user));
+  localStorage.setItem(SESSION_KEY, email);
+  return { ok: true, recoveryCode: newRecoveryCode };
 }
 
 async function login({ email, password }) {
@@ -204,7 +254,7 @@ async function exportAll() {
 }
 
 window.DataStore = {
-  signup, login, logout, currentUser,
+  signup, login, logout, currentUser, resetPassword,
   addExpense, updateExpense, deleteExpense, getDay, getMonth,
   exportAll,
 };
