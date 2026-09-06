@@ -72,4 +72,68 @@ function parseExpenseText(text) {
   };
 }
 
-window.Parser = { parseExpenseText, CATEGORIES, PAYMENT_MODES };
+// ---------- relative dates ("yesterday", "day before yesterday") ----------
+
+function extractDateOffset(textLower) {
+  if (/\bday before yesterday\b/.test(textLower)) return -2;
+  if (/\byesterday\b/.test(textLower)) return -1;
+  if (/\btoday\b/.test(textLower)) return 0;
+  return null;
+}
+
+function offsetDateStr(offsetDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// ---------- multiple items in one sentence ("500 on lunch and 200 on auto") ----------
+
+function splitSegments(text) {
+  return text.split(/\s*(?:,|;|\band\b)\s*/i).map((s) => s.trim()).filter(Boolean);
+}
+
+function parseExpenseTextMulti(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return [];
+  const lower = trimmed.toLowerCase();
+  const globalOffset = extractDateOffset(lower);
+
+  const withDates = (parsed, segmentLower) => {
+    const localOffset = extractDateOffset(segmentLower);
+    const offset = localOffset !== null ? localOffset : (globalOffset !== null ? globalOffset : 0);
+    return { ...parsed, date_offset: offset, spent_date_guess: offsetDateStr(offset) };
+  };
+
+  const segments = splitSegments(trimmed);
+  const candidates = segments.map((seg) => withDates(parseExpenseText(seg), seg.toLowerCase()));
+  const withAmount = candidates.filter((c) => c.amount !== null);
+  if (withAmount.length >= 2) return withAmount;
+
+  // Not really multiple items (or only one had a usable amount) -- treat
+  // the whole thing as a single expense instead of over-splitting on a
+  // stray "and".
+  return [withDates(parseExpenseText(trimmed), lower)];
+}
+
+// ---------- learning signature: groups "zomato 500 by upi" and "zomato
+// 250 via card" under the same key so a corrected category can be
+// remembered regardless of amount/payment mode. ----------
+
+const SIGNATURE_STOPWORDS = new Set([
+  "rupees", "rupee", "rs", "inr", "paisa", "on", "for", "by", "using", "via",
+  "through", "paid", "spent", "spend", "cash", "card", "credit", "debit",
+  "upi", "netbanking", "net", "banking", "and", "a", "an", "the", "to",
+  "of", "with", "today", "yesterday", "before",
+]);
+
+function computeSignature(text) {
+  const words = (text || "").toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+  const sig = words.filter((w) => !SIGNATURE_STOPWORDS.has(w)).sort().join(" ");
+  return sig || null;
+}
+
+window.Parser = {
+  parseExpenseText, parseExpenseTextMulti, computeSignature, offsetDateStr,
+  CATEGORIES, PAYMENT_MODES,
+};

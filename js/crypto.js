@@ -31,4 +31,4 @@ async function verifyPassword(password, saltB64, expectedHashB64) {
   return hashB64 === expectedHashB64;
 }
 
-window.Crypto = { hashPassword, verifyPassword };
+window.Crypto = { hashPassword, verifyPassword, bufToB64, b64ToBuf };

@@ -6,8 +6,10 @@
    and their scripts should not need to change at all. */
 
 const DB_NAME = "kharch_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const SESSION_KEY = "kharch_session_email";
+const LAST_EMAIL_KEY = "kharch_last_email";
+const TOTAL_BUDGET_CATEGORY = "__TOTAL__";
 
 let _dbPromise = null;
 
@@ -23,6 +25,14 @@ function openDb() {
       if (!db.objectStoreNames.contains("expenses")) {
         const store = db.createObjectStore("expenses", { keyPath: "id", autoIncrement: true });
         store.createIndex("byUserDate", ["userEmail", "spentDate"]);
+        store.createIndex("byUser", "userEmail");
+      }
+      if (!db.objectStoreNames.contains("budgets")) {
+        const store = db.createObjectStore("budgets", { keyPath: "id" });
+        store.createIndex("byUser", "userEmail");
+      }
+      if (!db.objectStoreNames.contains("categoryMemory")) {
+        const store = db.createObjectStore("categoryMemory", { keyPath: "id" });
         store.createIndex("byUser", "userEmail");
       }
     };
@@ -85,10 +95,13 @@ async function signup({ name, email, phone, password }) {
   const user = {
     email, name, phone, saltB64, hashB64,
     recoverySaltB64: recovery.saltB64, recoveryHashB64: recovery.hashB64,
+    pinSaltB64: null, pinHashB64: null,
+    webauthnCredentialId: null,
     createdAt: new Date().toISOString(),
   };
   await reqToPromise(tx(db, "users", "readwrite").objectStore("users").add(user));
   localStorage.setItem(SESSION_KEY, email);
+  localStorage.setItem(LAST_EMAIL_KEY, email);
   return { ok: true, recoveryCode };
 }
 
@@ -119,6 +132,7 @@ async function resetPassword({ email, recoveryCode, newPassword }) {
   user.recoveryHashB64 = newRecovery.hashB64;
   await reqToPromise(tx(db, "users", "readwrite").objectStore("users").put(user));
   localStorage.setItem(SESSION_KEY, email);
+  localStorage.setItem(LAST_EMAIL_KEY, email);
   return { ok: true, recoveryCode: newRecoveryCode };
 }
 
@@ -130,6 +144,7 @@ async function login({ email, password }) {
   const valid = await Crypto.verifyPassword(password, user.saltB64, user.hashB64);
   if (!valid) return { ok: false, error: "Incorrect email or password." };
   localStorage.setItem(SESSION_KEY, email);
+  localStorage.setItem(LAST_EMAIL_KEY, email);
   return { ok: true };
 }
 
@@ -154,6 +169,85 @@ function requireEmail() {
   const email = sessionEmail();
   if (!email) throw new Error("Not logged in.");
   return email;
+}
+
+// ---------- quick unlock: PIN + biometric ----------
+
+function lastEmail() {
+  return localStorage.getItem(LAST_EMAIL_KEY);
+}
+
+async function quickUnlockInfo(email) {
+  email = (email || "").trim().toLowerCase();
+  if (!email) return null;
+  const db = await openDb();
+  const user = await reqToPromise(tx(db, "users", "readonly").objectStore("users").get(email));
+  if (!user) return null;
+  return {
+    email: user.email, name: user.name,
+    hasPin: !!(user.pinSaltB64 && user.pinHashB64),
+    hasWebauthn: !!user.webauthnCredentialId,
+    webauthnCredentialId: user.webauthnCredentialId,
+  };
+}
+
+async function setPin(pin) {
+  const email = requireEmail();
+  if (!/^\d{4}$/.test(pin || "")) return { ok: false, error: "PIN must be 4 digits." };
+  const db = await openDb();
+  const store = tx(db, "users", "readwrite").objectStore("users");
+  const user = await reqToPromise(store.get(email));
+  const { saltB64, hashB64 } = await Crypto.hashPassword(pin);
+  user.pinSaltB64 = saltB64;
+  user.pinHashB64 = hashB64;
+  await reqToPromise(tx(db, "users", "readwrite").objectStore("users").put(user));
+  return { ok: true };
+}
+
+async function clearPin() {
+  const email = requireEmail();
+  const db = await openDb();
+  const user = await reqToPromise(tx(db, "users", "readonly").objectStore("users").get(email));
+  user.pinSaltB64 = null;
+  user.pinHashB64 = null;
+  await reqToPromise(tx(db, "users", "readwrite").objectStore("users").put(user));
+  return { ok: true };
+}
+
+async function quickUnlockWithPin({ email, pin }) {
+  email = (email || "").trim().toLowerCase();
+  const db = await openDb();
+  const user = await reqToPromise(tx(db, "users", "readonly").objectStore("users").get(email));
+  if (!user || !user.pinSaltB64 || !user.pinHashB64) return { ok: false, error: "No PIN set for this account." };
+  const valid = await Crypto.verifyPassword(pin, user.pinSaltB64, user.pinHashB64);
+  if (!valid) return { ok: false, error: "Incorrect PIN." };
+  localStorage.setItem(SESSION_KEY, email);
+  localStorage.setItem(LAST_EMAIL_KEY, email);
+  return { ok: true };
+}
+
+async function setWebauthnCredential(credentialId) {
+  const email = requireEmail();
+  const db = await openDb();
+  const user = await reqToPromise(tx(db, "users", "readonly").objectStore("users").get(email));
+  user.webauthnCredentialId = credentialId;
+  await reqToPromise(tx(db, "users", "readwrite").objectStore("users").put(user));
+  return { ok: true };
+}
+
+async function clearWebauthnCredential() {
+  const email = requireEmail();
+  const db = await openDb();
+  const user = await reqToPromise(tx(db, "users", "readonly").objectStore("users").get(email));
+  user.webauthnCredentialId = null;
+  await reqToPromise(tx(db, "users", "readwrite").objectStore("users").put(user));
+  return { ok: true };
+}
+
+function quickUnlockWithWebauthn(email) {
+  email = (email || "").trim().toLowerCase();
+  localStorage.setItem(SESSION_KEY, email);
+  localStorage.setItem(LAST_EMAIL_KEY, email);
 }
 
 // ---------- expenses ----------
@@ -245,6 +339,91 @@ async function getMonth(month) {
   };
 }
 
+async function getTrend(monthsBack) {
+  const n = monthsBack || 6;
+  const all = await allExpensesForUser();
+  const months = [];
+  const cursor = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(cursor.getFullYear(), cursor.getMonth() - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const totals = Object.fromEntries(months.map((m) => [m, 0]));
+  for (const e of all) {
+    const m = e.spent_date.slice(0, 7);
+    if (m in totals) totals[m] += e.amount;
+  }
+  return months.map((m) => ({ month: m, total: Math.round(totals[m] * 100) / 100 }));
+}
+
+async function getFrequent(limit) {
+  const n = limit || 5;
+  const all = await allExpensesForUser();
+  const groups = new Map();
+  for (const e of all) {
+    const key = `${e.amount}|${e.category}|${e.payment_mode}`;
+    const g = groups.get(key) || { amount: e.amount, category: e.category, payment_mode: e.payment_mode, note: e.note, count: 0, lastId: 0 };
+    g.count += 1;
+    if (e.id > g.lastId) { g.lastId = e.id; g.note = e.note; }
+    groups.set(key, g);
+  }
+  return [...groups.values()]
+    .filter((g) => g.count >= 2)
+    .sort((a, b) => b.count - a.count || b.lastId - a.lastId)
+    .slice(0, n);
+}
+
+// ---------- category memory (learns corrections to the text parser) ----------
+
+async function rememberCategory(signature, category) {
+  if (!signature) return;
+  const userEmail = requireEmail();
+  const db = await openDb();
+  const id = `${userEmail}::${signature}`;
+  await reqToPromise(tx(db, "categoryMemory", "readwrite").objectStore("categoryMemory")
+    .put({ id, userEmail, signature, category }));
+}
+
+async function recallCategory(signature) {
+  if (!signature) return null;
+  const userEmail = requireEmail();
+  const db = await openDb();
+  const row = await reqToPromise(tx(db, "categoryMemory", "readonly").objectStore("categoryMemory")
+    .get(`${userEmail}::${signature}`));
+  return row ? row.category : null;
+}
+
+// ---------- budgets ----------
+
+async function setBudget(category, monthlyLimit) {
+  const userEmail = requireEmail();
+  const db = await openDb();
+  const id = `${userEmail}::${category}`;
+  await reqToPromise(tx(db, "budgets", "readwrite").objectStore("budgets")
+    .put({ id, userEmail, category, monthlyLimit }));
+}
+
+async function deleteBudget(category) {
+  const userEmail = requireEmail();
+  const db = await openDb();
+  await reqToPromise(tx(db, "budgets", "readwrite").objectStore("budgets")
+    .delete(`${userEmail}::${category}`));
+}
+
+async function getBudgets() {
+  const userEmail = requireEmail();
+  const db = await openDb();
+  const index = tx(db, "budgets", "readonly").objectStore("budgets").index("byUser");
+  const rows = await reqToPromise(index.getAll(IDBKeyRange.only(userEmail)));
+  const byCategory = {};
+  let total = null;
+  for (const r of rows) {
+    if (r.category === TOTAL_BUDGET_CATEGORY) total = r.monthlyLimit;
+    else byCategory[r.category] = r.monthlyLimit;
+  }
+  return { total, byCategory };
+}
+
 // ---------- migration helper ----------
 
 async function exportAll() {
@@ -255,6 +434,10 @@ async function exportAll() {
 
 window.DataStore = {
   signup, login, logout, currentUser, resetPassword,
-  addExpense, updateExpense, deleteExpense, getDay, getMonth,
+  addExpense, updateExpense, deleteExpense, getDay, getMonth, getTrend, getFrequent,
+  rememberCategory, recallCategory,
+  setBudget, deleteBudget, getBudgets, TOTAL_BUDGET_CATEGORY,
+  lastEmail, quickUnlockInfo, setPin, clearPin, quickUnlockWithPin,
+  setWebauthnCredential, clearWebauthnCredential, quickUnlockWithWebauthn,
   exportAll,
 };

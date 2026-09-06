@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="auth-wrap">
+<div class="auth-wrap" id="fullForm" style="display:none;">
   <h1>Welcome back</h1>
   <p class="sub">Log in to see your spends on this device.</p>
   <div class="card">
@@ -35,9 +35,28 @@
   <p class="sub" style="text-align:center"><a class="btn-link" href="reset.html">Forgot password?</a></p>
   <p class="sub" style="text-align:center">New on this device? <a class="btn-link" href="signup.html">Create an account</a></p>
 </div>
+
+<div class="auth-wrap" id="quickUnlock" style="display:none;">
+  <h1>Hi, <span id="quickName"></span></h1>
+  <p class="sub">Unlock Kharch on this device.</p>
+  <div class="card" id="webauthnCard" style="display:none; text-align:center;">
+    <button class="btn-primary" id="webauthnBtn">Unlock with Face ID / Fingerprint</button>
+  </div>
+  <div class="card" id="pinCard" style="display:none;">
+    <p class="sub" style="text-align:center; margin-top:0;">Enter your PIN</p>
+    <div class="pin-dots" id="pinDots"></div>
+    <div class="error" id="pinError" style="text-align:center;"></div>
+    <div class="pin-keypad" id="pinKeypad"></div>
+  </div>
+  <p class="sub" style="text-align:center"><a class="btn-link" href="#" id="usePasswordLink">Use password instead</a></p>
+  <p class="sub" style="text-align:center"><a class="btn-link" href="#" id="switchAccountLink">Not you? Use a different account</a></p>
+</div>
+
 <script src="js/crypto.js"></script>
 <script src="js/dataStore.js"></script>
+<script src="js/webauthn.js"></script>
 <script src="js/pwToggle.js"></script>
+<script src="js/pinPad.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const errorEl = $('error');
@@ -58,7 +77,66 @@ async function doLogin() {
 $('loginBtn').addEventListener('click', doLogin);
 $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 
-if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+function showFullForm(prefillEmail) {
+  $('quickUnlock').style.display = 'none';
+  $('fullForm').style.display = 'block';
+  if (prefillEmail) $('email').value = prefillEmail;
+}
+
+async function showQuickUnlock(info) {
+  $('fullForm').style.display = 'none';
+  $('quickUnlock').style.display = 'block';
+  $('quickName').textContent = info.name;
+
+  if (info.hasWebauthn && await Webauthn.isAvailable()) {
+    $('webauthnCard').style.display = 'block';
+    $('webauthnBtn').addEventListener('click', async () => {
+      try {
+        const ok = await Webauthn.authenticate(info.webauthnCredentialId);
+        if (!ok) throw new Error();
+        DataStore.quickUnlockWithWebauthn(info.email);
+        window.location.href = 'index.html';
+      } catch (e) {
+        $('pinError').textContent = 'Biometric unlock failed or was cancelled -- try your PIN.';
+      }
+    });
+  }
+
+  if (info.hasPin) {
+    $('pinCard').style.display = 'block';
+    PinPad.buildPinPad($('pinKeypad'), $('pinDots'), 4, async (pin) => {
+      const result = await DataStore.quickUnlockWithPin({ email: info.email, pin });
+      if (!result.ok) {
+        $('pinError').textContent = result.error;
+        return;
+      }
+      window.location.href = 'index.html';
+    });
+  }
+}
+
+$('usePasswordLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  showFullForm(DataStore.lastEmail());
+});
+$('switchAccountLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  showFullForm();
+});
+
+(async function init() {
+  const last = DataStore.lastEmail();
+  if (last) {
+    const info = await DataStore.quickUnlockInfo(last);
+    if (info && (info.hasPin || info.hasWebauthn)) {
+      showQuickUnlock(info);
+      if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+      return;
+    }
+  }
+  showFullForm(last);
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+})();
 </script>
 </body>
 </html>

@@ -19,16 +19,56 @@
       <h1>Kharch</h1>
       <div class="who">Hi, <b id="userName">...</b></div>
     </div>
-    <button class="btn-secondary" id="logoutBtn">Log out</button>
+    <div style="display:flex; gap:8px;">
+      <button class="btn-secondary" id="settingsBtn">⚙</button>
+      <button class="btn-secondary" id="logoutBtn">Log out</button>
+    </div>
+  </div>
+
+  <div class="card" id="settingsCard" style="display:none;">
+    <h2>Settings</h2>
+
+    <h2 style="margin-top:4px;">Quick unlock</h2>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">4-digit PIN</div>
+        <div class="settings-desc">Unlock faster than typing your full password.</div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <a class="btn-link" href="#" id="pinRemoveBtn" style="display:none;">Remove</a>
+        <button class="btn-secondary" id="pinToggleBtn">Set PIN</button>
+      </div>
+    </div>
+    <div class="settings-row" id="webauthnRow" style="display:none;">
+      <div>
+        <div class="settings-label">Face ID / Fingerprint</div>
+        <div class="settings-desc">Uses your device's own biometric unlock.</div>
+      </div>
+      <button class="btn-secondary" id="webauthnToggleBtn">Enable</button>
+    </div>
+
+    <h2 style="margin-top:18px;">Monthly budgets</h2>
+    <div class="settings-desc" style="margin-bottom:8px;">Set a limit per category (and an overall total) to track against in Month view.</div>
+    <div id="budgetEditList"></div>
+
+    <h2 style="margin-top:18px;">Your data</h2>
+    <div class="settings-row">
+      <div class="settings-label">Export</div>
+      <div style="display:flex; gap:8px;">
+        <a class="btn-link" href="#" id="exportJsonLink">JSON</a>
+        <a class="btn-link" href="#" id="exportCsvLink">CSV</a>
+      </div>
+    </div>
   </div>
 
   <div class="card">
     <h2>Add an expense</h2>
+    <div id="chipRow" class="chip-row" style="display:none;"></div>
     <div class="mic-row">
       <button class="mic-btn" id="micBtn" title="Dictate">🎤</button>
-      <input type="text" id="dictateText" placeholder="e.g. 500 rupees on groceries by UPI">
+      <input type="text" id="dictateText" placeholder="e.g. 500 rupees on groceries by UPI, yesterday">
     </div>
-    <div class="mic-hint" id="micHint">Tap the mic and say it, or type it, then tap Parse.</div>
+    <div class="mic-hint" id="micHint">Tap the mic and say it, or type it, then tap Parse. You can even say "500 on lunch and 200 on auto".</div>
     <button class="btn-secondary" id="parseBtn" style="width:100%; margin-top:12px;">Parse</button>
 
     <div id="confirmBlock" style="display:none;">
@@ -56,6 +96,13 @@
       </div>
       <button class="btn-primary" id="saveBtn">Save expense</button>
       <button class="btn-secondary" id="cancelBtn" style="width:100%; margin-top:8px;">Cancel</button>
+    </div>
+
+    <div id="multiConfirmBlock" style="display:none;">
+      <p class="sub" id="multiHint" style="margin-top:14px;"></p>
+      <div id="multiRows"></div>
+      <button class="btn-primary" id="saveAllBtn">Save all</button>
+      <button class="btn-secondary" id="multiCancelBtn" style="width:100%; margin-top:8px;">Cancel</button>
     </div>
   </div>
 
@@ -91,13 +138,24 @@
         <div class="value" id="monthTotal">₹0</div>
       </div>
     </div>
+    <div class="card" id="budgetCard" style="display:none;">
+      <h2>Budgets</h2>
+      <div id="budgetProgress"></div>
+    </div>
     <div class="card">
       <h2>By day</h2>
       <div id="monthDaily"></div>
     </div>
     <div class="card">
       <h2>By category</h2>
-      <div id="monthCategory"></div>
+      <div class="chart-wrap">
+        <canvas class="donut-canvas" id="categoryDonut"></canvas>
+        <div class="legend" id="categoryLegend"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Last 6 months</h2>
+      <canvas class="trend-canvas" id="trendChart"></canvas>
     </div>
     <div class="card">
       <h2>By payment mode</h2>
@@ -105,14 +163,26 @@
     </div>
   </div>
 
-  <p class="footnote">All data lives only in this browser on this device. <a href="#" id="exportLink">Export as JSON</a> to back it up or move it to a server later.</p>
+  <p class="footnote">All data lives only in this browser on this device.</p>
+</div>
+
+<div class="auth-wrap" id="pinScreen" style="display:none;">
+  <h1 id="pinScreenTitle">Set a PIN</h1>
+  <p class="sub" id="pinScreenSub">Choose 4-6 digits.</p>
+  <div class="pin-dots" id="pinDots"></div>
+  <div class="error" id="pinError" style="text-align:center;"></div>
+  <div class="pin-keypad" id="pinKeypad"></div>
+  <p class="sub" style="text-align:center; margin-top:16px;"><a class="btn-link" href="#" id="pinCancel">Cancel</a></p>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script src="js/crypto.js"></script>
 <script src="js/dataStore.js"></script>
+<script src="js/webauthn.js"></script>
 <script src="js/parser.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/pinPad.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
