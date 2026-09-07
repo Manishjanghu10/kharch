@@ -67,7 +67,7 @@ setEntryType('expense');
 $('typeExpenseBtn').addEventListener('click', () => { typeManuallySet = true; setEntryType('expense'); });
 $('typeIncomeBtn').addEventListener('click', () => { typeManuallySet = true; setEntryType('income'); });
 
-const DEFAULT_MIC_HINT = 'Tap the mic and say it, or type it, then tap Parse. You can even say "500 on lunch and 200 on auto", or "10000 salary received by bank transfer".';
+const DEFAULT_MIC_HINT = 'Tap the mic and say it, or type it, then tap Review. You can even say "500 on lunch and 200 on auto", or "10000 salary received by bank transfer".';
 
 // ---------- auth bootstrap ----------
 async function checkAuth() {
