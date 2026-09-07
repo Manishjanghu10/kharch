@@ -70,13 +70,17 @@
   </div>
 
   <div class="card">
-    <h2>Add an expense</h2>
+    <h2>Add an entry</h2>
+    <div class="tabs" style="margin-bottom:14px;">
+      <button class="tab-btn active" id="typeExpenseBtn" type="button">Expense</button>
+      <button class="tab-btn" id="typeIncomeBtn" type="button">Income</button>
+    </div>
     <div id="chipRow" class="chip-row" style="display:none;"></div>
     <div class="mic-row">
       <button class="mic-btn" id="micBtn" title="Dictate">🎤</button>
       <input type="text" id="dictateText" placeholder="e.g. 500 rupees on groceries by UPI, yesterday">
     </div>
-    <div class="mic-hint" id="micHint">Tap the mic and say it, or type it, then tap Parse. You can even say "500 on lunch and 200 on auto".</div>
+    <div class="mic-hint" id="micHint">Tap the mic and say it, or type it, then tap Parse. You can even say "500 on lunch and 200 on auto", or "10000 salary received by bank transfer".</div>
     <button class="btn-secondary" id="parseBtn" style="width:100%; margin-top:12px;">Parse</button>
 
     <div id="confirmBlock" style="display:none;">
@@ -90,7 +94,7 @@
           <input type="date" id="fDate">
         </div>
         <div>
-          <label>Category</label>
+          <label id="fCategoryLabel">Category</label>
           <select id="fCategory"></select>
         </div>
         <div>
@@ -132,6 +136,10 @@
         <div class="value" id="dayTotal">₹0</div>
       </div>
     </div>
+    <div class="stat-row">
+      <div class="stat-chip"><span class="stat-label">Received</span><span class="stat-value" id="dayIncomeTotal">₹0</span></div>
+      <div class="stat-chip"><span class="stat-label">Net</span><span class="stat-value" id="dayNet">₹0</span></div>
+    </div>
     <div class="card" id="dayList"></div>
   </div>
 
@@ -143,13 +151,21 @@
     </div>
     <div class="total-banner">
       <div>
-        <div class="label">Total this month</div>
+        <div class="label">Total spent</div>
         <div class="value" id="monthTotal">₹0</div>
       </div>
+    </div>
+    <div class="stat-row">
+      <div class="stat-chip"><span class="stat-label">Received</span><span class="stat-value" id="monthIncomeTotal">₹0</span></div>
+      <div class="stat-chip"><span class="stat-label">Net</span><span class="stat-value" id="monthNet">₹0</span></div>
     </div>
     <div class="card" id="budgetCard" style="display:none;">
       <h2>Budgets</h2>
       <div id="budgetProgress"></div>
+    </div>
+    <div class="card" id="monthIncomeCard" style="display:none;">
+      <h2>Income by source</h2>
+      <div id="monthIncomeBySource"></div>
     </div>
     <div class="card">
       <h2>By day</h2>
@@ -180,9 +196,13 @@
     </div>
     <div class="total-banner">
       <div>
-        <div class="label">Total this year</div>
+        <div class="label">Total spent</div>
         <div class="value" id="yearTotal">₹0</div>
       </div>
+    </div>
+    <div class="stat-row">
+      <div class="stat-chip"><span class="stat-label">Received</span><span class="stat-value" id="yearIncomeTotal">₹0</span></div>
+      <div class="stat-chip"><span class="stat-label">Net</span><span class="stat-value" id="yearNet">₹0</span></div>
     </div>
     <div class="card">
       <h2>By month</h2>
@@ -191,6 +211,10 @@
     <div class="card">
       <h2>Top categories</h2>
       <div id="yearCategory"></div>
+    </div>
+    <div class="card" id="yearIncomeCard" style="display:none;">
+      <h2>Top income sources</h2>
+      <div id="yearIncomeSource"></div>
     </div>
   </div>
 

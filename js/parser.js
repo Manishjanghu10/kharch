@@ -36,6 +36,39 @@ const PAYMENT_KEYWORDS = [
 const CATEGORIES = CATEGORY_KEYWORDS.map(([c]) => c).concat(["Other"]);
 const PAYMENT_MODES = ["UPI", "Credit Card", "Debit Card", "Net Banking", "Card", "Cash"];
 
+// ---------- income ----------
+
+const INCOME_DETECT_KEYWORDS = [
+  "received", "credited", "salary", "income", "earned", "refund", "cashback",
+  "reimbursement", "reimbursed", "payment received", "got paid", "bonus",
+  "interest received", "dividend", "sold",
+];
+
+const INCOME_SOURCE_KEYWORDS = [
+  ["Salary", ["salary", "paycheck", "payroll"]],
+  ["Freelance/Business", ["freelance", "client payment", "business", "invoice", "project payment", "got paid"]],
+  ["Refund/Cashback", ["refund", "cashback", "reimbursement", "reimbursed"]],
+  ["Interest/Dividend", ["interest", "dividend"]],
+  ["Rental", ["rent received", "rental income"]],
+  ["Sale", ["sold", "sale of"]],
+  ["Gift", ["gift", "gifted"]],
+];
+
+const INCOME_SOURCES = INCOME_SOURCE_KEYWORDS.map(([s]) => s).concat(["Other"]);
+
+function detectIncome(textLower) {
+  return INCOME_DETECT_KEYWORDS.some((k) => textLower.includes(k));
+}
+
+function extractIncomeSource(textLower) {
+  for (const [source, keywords] of INCOME_SOURCE_KEYWORDS) {
+    for (const kw of keywords) {
+      if (textLower.includes(kw)) return source;
+    }
+  }
+  return "Other";
+}
+
 function extractAmount(textLower) {
   const match = textLower.match(/(\d[\d,]*(?:\.\d{1,2})?)/);
   if (!match) return null;
@@ -87,6 +120,25 @@ function offsetDateStr(offsetDays) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Parses either an expense or an income entry from one sentence. Type is
+// auto-detected from income keywords unless forcedType overrides it (used
+// when the user has manually flipped the Expense/Income toggle).
+function parseEntryText(text, forcedType) {
+  const trimmed = (text || "").trim();
+  const lower = trimmed.toLowerCase();
+  const type = forcedType || (detectIncome(lower) ? "income" : "expense");
+  const amount = extractAmount(lower);
+  const payment_mode = extractPaymentMode(lower);
+  const offset = extractDateOffset(lower);
+  const date_offset = offset !== null ? offset : 0;
+  const spent_date_guess = offsetDateStr(date_offset);
+
+  if (type === "income") {
+    return { type, amount, source: extractIncomeSource(lower), payment_mode, raw_text: trimmed, date_offset, spent_date_guess };
+  }
+  return { type, amount, category: extractCategory(lower), payment_mode, raw_text: trimmed, date_offset, spent_date_guess };
+}
+
 // ---------- multiple items in one sentence ("500 on lunch and 200 on auto") ----------
 
 function splitSegments(text) {
@@ -134,6 +186,6 @@ function computeSignature(text) {
 }
 
 window.Parser = {
-  parseExpenseText, parseExpenseTextMulti, computeSignature, offsetDateStr,
-  CATEGORIES, PAYMENT_MODES,
+  parseExpenseText, parseExpenseTextMulti, parseEntryText, computeSignature, offsetDateStr,
+  detectIncome, CATEGORIES, PAYMENT_MODES, INCOME_SOURCES,
 };

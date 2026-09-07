@@ -6,7 +6,7 @@
    and their scripts should not need to change at all. */
 
 const DB_NAME = "kharch_db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const SESSION_KEY = "kharch_session_email";
 const LAST_EMAIL_KEY = "kharch_last_email";
 const TOTAL_BUDGET_CATEGORY = "__TOTAL__";
@@ -33,6 +33,11 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains("categoryMemory")) {
         const store = db.createObjectStore("categoryMemory", { keyPath: "id" });
+        store.createIndex("byUser", "userEmail");
+      }
+      if (!db.objectStoreNames.contains("income")) {
+        const store = db.createObjectStore("income", { keyPath: "id", autoIncrement: true });
+        store.createIndex("byUserDate", ["userEmail", "receivedDate"]);
         store.createIndex("byUser", "userEmail");
       }
     };
@@ -307,59 +312,149 @@ function toApiShape(r) {
   };
 }
 
+// ---------- income ----------
+
+async function addIncome({ amount, source, payment_mode, note, raw_text, received_date, created_at }) {
+  const userEmail = requireEmail();
+  if (!(amount > 0)) throw new Error("Amount must be greater than zero.");
+  const db = await openDb();
+  const record = {
+    userEmail, amount, source, payment_mode,
+    note: note || null, raw_text: raw_text || null,
+    receivedDate: received_date || todayStr(),
+    createdAt: created_at || new Date().toISOString(),
+  };
+  const id = await reqToPromise(tx(db, "income", "readwrite").objectStore("income").add(record));
+  return id;
+}
+
+async function updateIncome(id, { amount, source, payment_mode, note, received_date }) {
+  const userEmail = requireEmail();
+  if (!(amount > 0)) throw new Error("Amount must be greater than zero.");
+  const db = await openDb();
+  const store = tx(db, "income", "readwrite").objectStore("income");
+  const existing = await reqToPromise(store.get(id));
+  if (!existing || existing.userEmail !== userEmail) return false;
+  existing.amount = amount;
+  existing.source = source;
+  existing.payment_mode = payment_mode;
+  existing.note = note || null;
+  existing.receivedDate = received_date;
+  await reqToPromise(store.put(existing));
+  return true;
+}
+
+async function deleteIncome(id) {
+  const userEmail = requireEmail();
+  const db = await openDb();
+  const store = tx(db, "income", "readwrite").objectStore("income");
+  const existing = await reqToPromise(store.get(id));
+  if (!existing || existing.userEmail !== userEmail) return false;
+  await reqToPromise(store.delete(id));
+  return true;
+}
+
+async function allIncomeForUser() {
+  const userEmail = requireEmail();
+  const db = await openDb();
+  const index = tx(db, "income", "readonly").objectStore("income").index("byUser");
+  const rows = await reqToPromise(index.getAll(IDBKeyRange.only(userEmail)));
+  return rows.map(toIncomeApiShape);
+}
+
+function toIncomeApiShape(r) {
+  return {
+    id: r.id, amount: r.amount, source: r.source, payment_mode: r.payment_mode,
+    note: r.note, raw_text: r.raw_text, received_date: r.receivedDate, created_at: r.createdAt,
+  };
+}
+
+function sumAmount(list) {
+  return Math.round(list.reduce((s, e) => s + e.amount, 0) * 100) / 100;
+}
+
 async function getDay(date) {
   const spentDate = date || todayStr();
-  const all = await allExpensesForUser();
-  const expenses = all.filter((e) => e.spent_date === spentDate).sort((a, b) => b.id - a.id);
-  const total = expenses.reduce((s, e) => s + e.amount, 0);
-  return { date: spentDate, expenses, total: Math.round(total * 100) / 100 };
+  const allExp = await allExpensesForUser();
+  const allInc = await allIncomeForUser();
+  const expenses = allExp.filter((e) => e.spent_date === spentDate).sort((a, b) => b.id - a.id);
+  const income = allInc.filter((e) => e.received_date === spentDate).sort((a, b) => b.id - a.id);
+  const total = sumAmount(expenses);
+  const totalIncome = sumAmount(income);
+  return {
+    date: spentDate, expenses, income, total, total_income: totalIncome,
+    net: Math.round((totalIncome - total) * 100) / 100,
+  };
 }
 
 async function getMonth(month) {
   const m = month || todayStr().slice(0, 7);
-  const all = await allExpensesForUser();
-  const expenses = all.filter((e) => e.spent_date.startsWith(m + "-"))
+  const allExp = await allExpensesForUser();
+  const allInc = await allIncomeForUser();
+  const expenses = allExp.filter((e) => e.spent_date.startsWith(m + "-"))
     .sort((a, b) => (a.spent_date < b.spent_date ? -1 : a.spent_date > b.spent_date ? 1 : a.id - b.id));
+  const income = allInc.filter((e) => e.received_date.startsWith(m + "-"))
+    .sort((a, b) => (a.received_date < b.received_date ? -1 : a.received_date > b.received_date ? 1 : a.id - b.id));
 
-  const daily = {}, byCategory = {}, byPaymentMode = {};
+  const daily = {}, byCategory = {}, byPaymentMode = {}, bySource = {};
   for (const e of expenses) {
     daily[e.spent_date] = (daily[e.spent_date] || 0) + e.amount;
     byCategory[e.category] = (byCategory[e.category] || 0) + e.amount;
     byPaymentMode[e.payment_mode] = (byPaymentMode[e.payment_mode] || 0) + e.amount;
   }
+  for (const e of income) {
+    bySource[e.source] = (bySource[e.source] || 0) + e.amount;
+  }
   const round2 = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, Math.round(v * 100) / 100]));
   const sortByValueDesc = (obj) => Object.fromEntries(Object.entries(obj).sort((a, b) => b[1] - a[1]));
-  const total = expenses.reduce((s, e) => s + e.amount, 0);
+  const total = sumAmount(expenses);
+  const totalIncome = sumAmount(income);
 
   return {
-    month: m, expenses, total: Math.round(total * 100) / 100,
+    month: m, expenses, income, total: Math.round(total * 100) / 100, total_income: totalIncome,
+    net: Math.round((totalIncome - total) * 100) / 100,
     daily_totals: round2(Object.fromEntries(Object.entries(daily).sort())),
     by_category: round2(sortByValueDesc(byCategory)),
     by_payment_mode: round2(sortByValueDesc(byPaymentMode)),
+    by_source: round2(sortByValueDesc(bySource)),
   };
 }
 
 async function getYear(year) {
   const y = year || new Date().getFullYear();
-  const all = await allExpensesForUser();
-  const expenses = all.filter((e) => e.spent_date.startsWith(`${y}-`));
+  const allExp = await allExpensesForUser();
+  const allInc = await allIncomeForUser();
+  const expenses = allExp.filter((e) => e.spent_date.startsWith(`${y}-`));
+  const income = allInc.filter((e) => e.received_date.startsWith(`${y}-`));
 
-  const monthly = {};
-  for (let m = 1; m <= 12; m++) monthly[`${y}-${String(m).padStart(2, "0")}`] = 0;
-  const byCategory = {};
+  const monthly = {}, monthlyIncome = {};
+  for (let m = 1; m <= 12; m++) {
+    monthly[`${y}-${String(m).padStart(2, "0")}`] = 0;
+    monthlyIncome[`${y}-${String(m).padStart(2, "0")}`] = 0;
+  }
+  const byCategory = {}, bySource = {};
   for (const e of expenses) {
     const m = e.spent_date.slice(0, 7);
     if (m in monthly) monthly[m] += e.amount;
     byCategory[e.category] = (byCategory[e.category] || 0) + e.amount;
   }
+  for (const e of income) {
+    const m = e.received_date.slice(0, 7);
+    if (m in monthlyIncome) monthlyIncome[m] += e.amount;
+    bySource[e.source] = (bySource[e.source] || 0) + e.amount;
+  }
   const round2 = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, Math.round(v * 100) / 100]));
   const sortByValueDesc = (obj) => Object.fromEntries(Object.entries(obj).sort((a, b) => b[1] - a[1]));
-  const total = expenses.reduce((s, e) => s + e.amount, 0);
+  const total = sumAmount(expenses);
+  const totalIncome = sumAmount(income);
 
   return {
-    year: y, total: Math.round(total * 100) / 100,
+    year: y, total: Math.round(total * 100) / 100, total_income: totalIncome,
+    net: Math.round((totalIncome - total) * 100) / 100,
     monthly_totals: round2(monthly),
+    monthly_income_totals: round2(monthlyIncome),
     by_category: round2(sortByValueDesc(byCategory)),
+    by_source: round2(sortByValueDesc(bySource)),
   };
 }
 
@@ -453,7 +548,8 @@ async function getBudgets() {
 async function exportAll() {
   const user = await currentUser();
   const expenses = await allExpensesForUser();
-  return { user, expenses, exported_at: new Date().toISOString() };
+  const income = await allIncomeForUser();
+  return { user, expenses, income, exported_at: new Date().toISOString() };
 }
 
 function expenseDedupeKey(e) {
@@ -465,39 +561,62 @@ function expenseDedupeKey(e) {
   return e.created_at || [e.spent_date, e.amount, e.category, e.payment_mode, e.note || "", e.raw_text || ""].join("|");
 }
 
-// Adds expenses from a previously exported JSON file into the CURRENTLY
-// logged-in account on this device -- it does not switch accounts or
-// touch passwords (the export never contains those). Records identical to
-// ones already present (same date/amount/category/payment/note/raw_text)
-// are skipped so importing the same backup twice is harmless.
-async function importExpenses(expenses) {
-  const existing = await allExpensesForUser();
-  const seen = new Set(existing.map(expenseDedupeKey));
-  let added = 0, skipped = 0;
+function incomeDedupeKey(e) {
+  return e.created_at || [e.received_date, e.amount, e.source, e.payment_mode, e.note || "", e.raw_text || ""].join("|");
+}
+
+// Adds expenses/income from a previously exported JSON file into the
+// CURRENTLY logged-in account on this device -- it does not switch
+// accounts or touch passwords (exports never contain those). Records
+// identical to ones already present are skipped so importing the same
+// backup twice is harmless.
+async function importData({ expenses, income }) {
+  const existingExp = await allExpensesForUser();
+  const seenExp = new Set(existingExp.map(expenseDedupeKey));
+  let addedExpenses = 0, skippedExpenses = 0;
   for (const e of expenses || []) {
     const key = expenseDedupeKey(e);
-    if (seen.has(key)) { skipped++; continue; }
+    if (seenExp.has(key)) { skippedExpenses++; continue; }
     try {
       await addExpense({
         amount: e.amount, category: e.category, payment_mode: e.payment_mode,
-        note: e.note, raw_text: e.raw_text, spent_date: e.spent_date,
-        created_at: e.created_at,
+        note: e.note, raw_text: e.raw_text, spent_date: e.spent_date, created_at: e.created_at,
       });
-      seen.add(key);
-      added++;
+      seenExp.add(key);
+      addedExpenses++;
     } catch (err) {
-      skipped++;
+      skippedExpenses++;
     }
   }
-  return { added, skipped };
+
+  const existingInc = await allIncomeForUser();
+  const seenInc = new Set(existingInc.map(incomeDedupeKey));
+  let addedIncome = 0, skippedIncome = 0;
+  for (const e of income || []) {
+    const key = incomeDedupeKey(e);
+    if (seenInc.has(key)) { skippedIncome++; continue; }
+    try {
+      await addIncome({
+        amount: e.amount, source: e.source, payment_mode: e.payment_mode,
+        note: e.note, raw_text: e.raw_text, received_date: e.received_date, created_at: e.created_at,
+      });
+      seenInc.add(key);
+      addedIncome++;
+    } catch (err) {
+      skippedIncome++;
+    }
+  }
+
+  return { addedExpenses, skippedExpenses, addedIncome, skippedIncome };
 }
 
 window.DataStore = {
   signup, login, logout, currentUser, resetPassword,
   addExpense, updateExpense, deleteExpense, getDay, getMonth, getYear, getTrend, getFrequent,
+  addIncome, updateIncome, deleteIncome,
   rememberCategory, recallCategory,
   setBudget, deleteBudget, getBudgets, TOTAL_BUDGET_CATEGORY,
   lastEmail, quickUnlockInfo, setPin, clearPin, quickUnlockWithPin,
   setWebauthnCredential, clearWebauthnCredential, quickUnlockWithWebauthn,
-  exportAll, importExpenses,
+  exportAll, importData,
 };

@@ -2,7 +2,9 @@ const $ = (id) => document.getElementById(id);
 
 let editingId = null;
 let dayExpensesById = {};
+let dayIncomeById = {};
 let dayTotalValue = 0;
+let dayIncomeTotalValue = 0;
 let multiCandidates = [];
 
 function todayStr() {
@@ -42,10 +44,30 @@ function showToast(msg, actionLabel, actionFn) {
   toastTimer = setTimeout(() => t.classList.remove('show'), actionLabel ? 4500 : 2200);
 }
 
-fillSelect($('fCategory'), Parser.CATEGORIES);
 fillSelect($('fPaymentMode'), Parser.PAYMENT_MODES);
 
-const DEFAULT_MIC_HINT = 'Tap the mic and say it, or type it, then tap Parse. You can even say "500 on lunch and 200 on auto".';
+let entryType = 'expense';
+let editingType = 'expense';
+let typeManuallySet = false;
+
+function setEntryType(type) {
+  entryType = type;
+  $('typeExpenseBtn').classList.toggle('active', type === 'expense');
+  $('typeIncomeBtn').classList.toggle('active', type === 'income');
+  if (type === 'income') {
+    fillSelect($('fCategory'), Parser.INCOME_SOURCES);
+    $('fCategoryLabel').textContent = 'Source';
+  } else {
+    fillSelect($('fCategory'), Parser.CATEGORIES);
+    $('fCategoryLabel').textContent = 'Category';
+  }
+}
+setEntryType('expense');
+
+$('typeExpenseBtn').addEventListener('click', () => { typeManuallySet = true; setEntryType('expense'); });
+$('typeIncomeBtn').addEventListener('click', () => { typeManuallySet = true; setEntryType('income'); });
+
+const DEFAULT_MIC_HINT = 'Tap the mic and say it, or type it, then tap Parse. You can even say "500 on lunch and 200 on auto", or "10000 salary received by bank transfer".';
 
 // ---------- auth bootstrap ----------
 async function checkAuth() {
@@ -174,10 +196,11 @@ $('exportJsonLink').addEventListener('click', async (e) => {
 $('exportCsvLink').addEventListener('click', async (e) => {
   e.preventDefault();
   const data = await DataStore.exportAll();
-  const header = ['date', 'amount', 'category', 'payment_mode', 'note', 'raw_text'];
+  const header = ['type', 'date', 'amount', 'category_or_source', 'payment_mode', 'note', 'raw_text'];
   const csvEscape = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-  const rows = data.expenses.map((x) => [x.spent_date, x.amount, x.category, x.payment_mode, x.note, x.raw_text]);
-  const csv = [header.join(','), ...rows.map((r) => r.map(csvEscape).join(','))].join('\n');
+  const expenseRows = data.expenses.map((x) => ['expense', x.spent_date, x.amount, x.category, x.payment_mode, x.note, x.raw_text]);
+  const incomeRows = data.income.map((x) => ['income', x.received_date, x.amount, x.source, x.payment_mode, x.note, x.raw_text]);
+  const csv = [header.join(','), ...[...expenseRows, ...incomeRows].map((r) => r.map(csvEscape).join(','))].join('\n');
   downloadFile(`kharch-export-${todayStr()}.csv`, csv, 'text/csv');
 });
 
@@ -192,21 +215,30 @@ $('importFileInput').addEventListener('change', async (e) => {
   let data;
   try {
     data = JSON.parse(await file.text());
-    if (!data || !Array.isArray(data.expenses)) throw new Error('not a Kharch export');
+    if (!data || (!Array.isArray(data.expenses) && !Array.isArray(data.income))) throw new Error('not a Kharch export');
   } catch (err) {
     showToast("That doesn't look like a valid Kharch export file.");
     return;
   }
-  if (!data.expenses.length) { showToast('No expenses found in that file.'); return; }
+  const expenseCount = (data.expenses || []).length;
+  const incomeCount = (data.income || []).length;
+  if (!expenseCount && !incomeCount) { showToast('No entries found in that file.'); return; }
 
   const who = data.user ? `${data.user.name} (${data.user.email})` : 'unknown account';
   const when = data.exported_at ? new Date(data.exported_at).toLocaleDateString() : 'an unknown date';
-  const ok = confirm(`Import ${data.expenses.length} expense(s) from a backup of ${who}, exported ${when}?\n\nThey'll be added to your current account on this device.`);
+  const wantParts = [];
+  if (expenseCount) wantParts.push(`${expenseCount} expense(s)`);
+  if (incomeCount) wantParts.push(`${incomeCount} income entr${incomeCount === 1 ? 'y' : 'ies'}`);
+  const ok = confirm(`Import ${wantParts.join(' and ')} from a backup of ${who}, exported ${when}?\n\nThey'll be added to your current account on this device.`);
   if (!ok) return;
 
-  const result = await DataStore.importExpenses(data.expenses);
-  showToast(`Imported ${result.added} expense${result.added === 1 ? '' : 's'}` +
-    (result.skipped ? `, skipped ${result.skipped} duplicate${result.skipped === 1 ? '' : 's'}.` : '.'));
+  const result = await DataStore.importData(data);
+  const gotParts = [];
+  if (expenseCount) gotParts.push(`${result.addedExpenses} expense${result.addedExpenses === 1 ? '' : 's'}` +
+    (result.skippedExpenses ? ` (${result.skippedExpenses} duplicate skipped)` : ''));
+  if (incomeCount) gotParts.push(`${result.addedIncome} income entr${result.addedIncome === 1 ? 'y' : 'ies'}` +
+    (result.skippedIncome ? ` (${result.skippedIncome} duplicate skipped)` : ''));
+  showToast(`Imported ${gotParts.join(', ')}.`);
   loadDay(); loadMonth(); renderChips();
 });
 
@@ -281,16 +313,32 @@ async function applyMemory(parsed) {
 
 async function doParse() {
   const text = $('dictateText').value.trim();
-  if (!text) { showToast('Say or type an expense first.'); return; }
-  const candidates = Parser.parseExpenseTextMulti(text);
-  if (!candidates.length || candidates[0].amount === null) {
+  if (!text) { showToast('Say or type an entry first.'); return; }
+  const lower = text.toLowerCase();
+  if (!typeManuallySet) {
+    setEntryType(Parser.detectIncome(lower) ? 'income' : 'expense');
+  }
+
+  if (entryType === 'expense') {
+    const candidates = Parser.parseExpenseTextMulti(text);
+    if (candidates.length > 1) {
+      for (const c of candidates) await applyMemory(c);
+      renderMultiConfirm(candidates);
+      return;
+    }
+  }
+
+  const parsed = Parser.parseEntryText(text, entryType);
+  if (parsed.amount === null) {
     showToast('Could not find an amount in that.');
     return;
   }
-  for (const c of candidates) await applyMemory(c);
-
-  if (candidates.length === 1) renderSingleConfirm(candidates[0]);
-  else renderMultiConfirm(candidates);
+  if (parsed.type === 'income') {
+    renderSingleConfirmIncome(parsed);
+  } else {
+    await applyMemory(parsed);
+    renderSingleConfirm(parsed);
+  }
 }
 $('parseBtn').addEventListener('click', doParse);
 $('cancelBtn').addEventListener('click', resetForm);
@@ -303,11 +351,27 @@ function renderSingleConfirm(c) {
   $('fNote').value = '';
   $('fDate').value = editingId ? ($('fDate').value || todayStr()) : (c.spent_date_guess || todayStr());
   $('confirmBlock').style.display = 'block';
+  $('saveBtn').textContent = editingId ? 'Update expense' : 'Save expense';
+  $('micHint').textContent = 'Check the details below, then save.';
+}
+
+function renderSingleConfirmIncome(c) {
+  $('multiConfirmBlock').style.display = 'none';
+  $('fAmount').value = c.amount ?? '';
+  $('fCategory').value = c.source || 'Other';
+  $('fPaymentMode').value = c.payment_mode || 'Cash';
+  $('fNote').value = '';
+  $('fDate').value = editingId ? ($('fDate').value || todayStr()) : (c.spent_date_guess || todayStr());
+  $('confirmBlock').style.display = 'block';
+  $('saveBtn').textContent = editingId ? 'Update income' : 'Save income';
   $('micHint').textContent = 'Check the details below, then save.';
 }
 
 function resetForm() {
   editingId = null;
+  editingType = 'expense';
+  typeManuallySet = false;
+  setEntryType('expense');
   $('dictateText').value = '';
   $('confirmBlock').style.display = 'none';
   $('saveBtn').textContent = 'Save expense';
@@ -317,28 +381,34 @@ function resetForm() {
 $('saveBtn').addEventListener('click', async () => {
   const amount = parseFloat($('fAmount').value);
   if (!amount || amount <= 0) { showToast('Enter a valid amount.'); return; }
-  const category = $('fCategory').value;
-  const body = {
-    amount, category,
-    payment_mode: $('fPaymentMode').value,
-    note: $('fNote').value || null,
-    spent_date: $('fDate').value || todayStr(),
-    raw_text: $('dictateText').value || null,
-  };
+  const selectValue = $('fCategory').value;
+  const payment_mode = $('fPaymentMode').value;
+  const note = $('fNote').value || null;
+  const date = $('fDate').value || todayStr();
+  const raw_text = $('dictateText').value || null;
   try {
-    if (editingId) {
-      const ok = await DataStore.updateExpense(editingId, body);
-      if (!ok) throw new Error('Expense not found.');
+    if (entryType === 'income') {
+      if (editingId && editingType === 'income') {
+        const ok = await DataStore.updateIncome(editingId, { amount, source: selectValue, payment_mode, note, received_date: date });
+        if (!ok) throw new Error('Entry not found.');
+      } else {
+        await DataStore.addIncome({ amount, source: selectValue, payment_mode, note, raw_text, received_date: date });
+      }
     } else {
-      await DataStore.addExpense(body);
+      if (editingId && editingType === 'expense') {
+        const ok = await DataStore.updateExpense(editingId, { amount, category: selectValue, payment_mode, note, spent_date: date });
+        if (!ok) throw new Error('Expense not found.');
+      } else {
+        await DataStore.addExpense({ amount, category: selectValue, payment_mode, note, raw_text, spent_date: date });
+      }
+      const sig = Parser.computeSignature(raw_text);
+      if (sig) await DataStore.rememberCategory(sig, selectValue);
     }
-    const sig = Parser.computeSignature(body.raw_text);
-    if (sig) await DataStore.rememberCategory(sig, category);
   } catch (e) {
-    showToast(e.message || 'Could not save expense.');
+    showToast(e.message || 'Could not save.');
     return;
   }
-  showToast(editingId ? 'Expense updated.' : 'Expense saved.');
+  showToast(editingId ? 'Entry updated.' : (entryType === 'income' ? 'Income saved.' : 'Expense saved.'));
   resetForm();
   loadDay(); loadMonth(); renderChips();
 });
@@ -346,6 +416,9 @@ $('saveBtn').addEventListener('click', async () => {
 function startEditById(id) { startEdit(dayExpensesById[id]); }
 function startEdit(exp) {
   editingId = exp.id;
+  editingType = 'expense';
+  typeManuallySet = true;
+  setEntryType('expense');
   $('multiConfirmBlock').style.display = 'none';
   $('dictateText').value = exp.raw_text || '';
   $('fAmount').value = exp.amount;
@@ -355,6 +428,24 @@ function startEdit(exp) {
   $('fDate').value = exp.spent_date;
   $('confirmBlock').style.display = 'block';
   $('saveBtn').textContent = 'Update expense';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function startEditIncomeById(id) { startEditIncome(dayIncomeById[id]); }
+function startEditIncome(inc) {
+  editingId = inc.id;
+  editingType = 'income';
+  typeManuallySet = true;
+  setEntryType('income');
+  $('multiConfirmBlock').style.display = 'none';
+  $('dictateText').value = inc.raw_text || '';
+  $('fAmount').value = inc.amount;
+  $('fCategory').value = inc.source;
+  $('fPaymentMode').value = inc.payment_mode;
+  $('fNote').value = inc.note || '';
+  $('fDate').value = inc.received_date;
+  $('confirmBlock').style.display = 'block';
+  $('saveBtn').textContent = 'Update income';
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -420,13 +511,15 @@ $('saveAllBtn').addEventListener('click', async () => {
 $('multiCancelBtn').addEventListener('click', resetMultiForm);
 function resetMultiForm() {
   multiCandidates = [];
+  typeManuallySet = false;
+  setEntryType('expense');
   $('multiConfirmBlock').style.display = 'none';
   $('dictateText').value = '';
   $('micHint').textContent = DEFAULT_MIC_HINT;
 }
 
 // ---------- swipe-to-delete + undo ----------
-function attachSwipe(fgEl, id) {
+function attachSwipe(fgEl, id, type) {
   let startX = 0, dx = 0, dragging = false;
   const threshold = -70, maxReveal = -90;
   fgEl.addEventListener('touchstart', (e) => {
@@ -446,7 +539,7 @@ function attachSwipe(fgEl, id) {
     fgEl.classList.add('snap');
     if (dx < threshold) {
       fgEl.style.transform = 'translateX(-100%)';
-      setTimeout(() => deleteExpense(id), 150);
+      setTimeout(() => (type === 'income' ? deleteIncome(id) : deleteExpense(id)), 150);
     } else {
       fgEl.style.transform = 'translateX(0)';
     }
@@ -454,23 +547,55 @@ function attachSwipe(fgEl, id) {
   });
 }
 
+function updateDayStatDisplays() {
+  $('dayTotal').textContent = fmtMoney(dayTotalValue);
+  $('dayIncomeTotal').textContent = fmtMoney(dayIncomeTotalValue);
+  const net = Math.round((dayIncomeTotalValue - dayTotalValue) * 100) / 100;
+  const netEl = $('dayNet');
+  netEl.textContent = fmtMoney(net);
+  netEl.className = 'stat-value ' + (net >= 0 ? 'positive' : 'negative');
+}
+
+function noEntriesLeftInDayList() {
+  if (!document.querySelector('#dayList .swipe-container')) {
+    $('dayList').innerHTML = '<div class="empty">No entries logged for this day.</div>';
+  }
+}
+
 async function deleteExpense(id) {
   const exp = dayExpensesById[id];
   if (!exp) return;
-  const rowEl = document.querySelector(`.swipe-container[data-row-id="${id}"]`);
+  const rowEl = document.querySelector(`.swipe-container[data-row-id="expense-${id}"]`);
   if (rowEl) rowEl.remove();
   dayTotalValue = Math.max(0, dayTotalValue - exp.amount);
-  $('dayTotal').textContent = fmtMoney(dayTotalValue);
   delete dayExpensesById[id];
-  if (!Object.keys(dayExpensesById).length) {
-    $('dayList').innerHTML = '<div class="empty">No expenses logged for this day.</div>';
-  }
+  updateDayStatDisplays();
+  noEntriesLeftInDayList();
   const timeoutId = setTimeout(async () => {
     await DataStore.deleteExpense(id);
     loadMonth();
     renderChips();
   }, 4000);
   showToast('Expense deleted', 'Undo', () => {
+    clearTimeout(timeoutId);
+    loadDay();
+  });
+}
+
+async function deleteIncome(id) {
+  const inc = dayIncomeById[id];
+  if (!inc) return;
+  const rowEl = document.querySelector(`.swipe-container[data-row-id="income-${id}"]`);
+  if (rowEl) rowEl.remove();
+  dayIncomeTotalValue = Math.max(0, dayIncomeTotalValue - inc.amount);
+  delete dayIncomeById[id];
+  updateDayStatDisplays();
+  noEntriesLeftInDayList();
+  const timeoutId = setTimeout(async () => {
+    await DataStore.deleteIncome(id);
+    loadMonth();
+  }, 4000);
+  showToast('Income deleted', 'Undo', () => {
     clearTimeout(timeoutId);
     loadDay();
   });
@@ -495,32 +620,48 @@ async function loadDay() {
   const date = $('dayPicker').value || todayStr();
   const data = await DataStore.getDay(date);
   dayTotalValue = data.total;
-  $('dayTotal').textContent = fmtMoney(dayTotalValue);
-  const list = $('dayList');
+  dayIncomeTotalValue = data.total_income;
+  updateDayStatDisplays();
+
   dayExpensesById = Object.fromEntries(data.expenses.map((e) => [e.id, e]));
-  if (!data.expenses.length) {
-    list.innerHTML = '<div class="empty">No expenses logged for this day.</div>';
+  dayIncomeById = Object.fromEntries(data.income.map((e) => [e.id, e]));
+
+  const combined = [
+    ...data.expenses.map((e) => ({ ...e, _type: 'expense' })),
+    ...data.income.map((e) => ({ ...e, _type: 'income' })),
+  ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+  const list = $('dayList');
+  if (!combined.length) {
+    list.innerHTML = '<div class="empty">No entries logged for this day.</div>';
     return;
   }
-  list.innerHTML = data.expenses.map((e) => `
-    <div class="swipe-container" data-row-id="${e.id}">
+  list.innerHTML = combined.map((e) => {
+    const isIncome = e._type === 'income';
+    const label = isIncome ? e.source : e.category;
+    const amountText = (isIncome ? '+' : '') + fmtMoney(e.amount);
+    const editFn = isIncome ? `startEditIncomeById(${e.id})` : `startEditById(${e.id})`;
+    const deleteFn = isIncome ? `deleteIncome(${e.id})` : `deleteExpense(${e.id})`;
+    return `
+    <div class="swipe-container" data-row-id="${e._type}-${e.id}">
       <div class="swipe-bg">Delete</div>
       <div class="swipe-fg snap">
-        <div class="expense-row">
+        <div class="expense-row${isIncome ? ' income-row' : ''}">
           <div>
-            <div><span class="amount">${fmtMoney(e.amount)}</span></div>
-            <div class="meta"><span class="cat-tag">${escapeHtml(e.category)}</span>${escapeHtml(e.payment_mode)}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
+            <div><span class="amount">${amountText}</span></div>
+            <div class="meta"><span class="cat-tag">${escapeHtml(label)}</span>${escapeHtml(e.payment_mode)}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
           </div>
           <div class="expense-actions">
-            <button onclick="startEditById(${e.id})">Edit</button>
-            <button class="btn-danger" onclick="deleteExpense(${e.id})">Delete</button>
+            <button onclick="${editFn}">Edit</button>
+            <button class="btn-danger" onclick="${deleteFn}">Delete</button>
           </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
   list.querySelectorAll('.swipe-container').forEach((container) => {
-    attachSwipe(container.querySelector('.swipe-fg'), +container.dataset.rowId);
+    const [type, idStr] = container.dataset.rowId.split('-');
+    attachSwipe(container.querySelector('.swipe-fg'), +idStr, type);
   });
 }
 $('dayPicker').addEventListener('change', loadDay);
@@ -553,6 +694,19 @@ async function loadMonth() {
   const month = $('monthPicker').value || currentMonthStr();
   const data = await DataStore.getMonth(month);
   $('monthTotal').textContent = fmtMoney(data.total);
+  $('monthIncomeTotal').textContent = fmtMoney(data.total_income);
+  const monthNetEl = $('monthNet');
+  monthNetEl.textContent = fmtMoney(data.net);
+  monthNetEl.className = 'stat-value ' + (data.net >= 0 ? 'positive' : 'negative');
+
+  const sourceEntries = Object.entries(data.by_source || {});
+  if (sourceEntries.length) {
+    $('monthIncomeCard').style.display = 'block';
+    $('monthIncomeBySource').innerHTML = sourceEntries.map(([s, v]) => `
+      <div class="breakdown-row"><span>${escapeHtml(s)}</span><span>${fmtMoney(v)}</span></div>`).join('');
+  } else {
+    $('monthIncomeCard').style.display = 'none';
+  }
 
   const budgets = await DataStore.getBudgets();
   const catBudgetEntries = Object.entries(budgets.byCategory || {});
@@ -634,6 +788,10 @@ async function loadYear() {
   const data = await DataStore.getYear(currentYear);
   $('yearLabel').textContent = String(currentYear);
   $('yearTotal').textContent = fmtMoney(data.total);
+  $('yearIncomeTotal').textContent = fmtMoney(data.total_income);
+  const yearNetEl = $('yearNet');
+  yearNetEl.textContent = fmtMoney(data.net);
+  yearNetEl.className = 'stat-value ' + (data.net >= 0 ? 'positive' : 'negative');
 
   const entries = Object.entries(data.monthly_totals).map(([m, v]) => ({ label: monthShortFromNum(+m.slice(5)), value: v }));
   const thisYear = new Date().getFullYear();
@@ -644,12 +802,23 @@ async function loadYear() {
     ? Object.entries(data.by_category).map(([c, v]) => `
         <div class="breakdown-row"><span>${escapeHtml(c)}</span><span>${fmtMoney(v)}</span></div>`).join('')
     : '<div class="empty">No data yet.</div>';
+
+  const sourceEntries = Object.entries(data.by_source || {});
+  if (sourceEntries.length) {
+    $('yearIncomeCard').style.display = 'block';
+    $('yearIncomeSource').innerHTML = sourceEntries.map(([s, v]) => `
+      <div class="breakdown-row"><span>${escapeHtml(s)}</span><span>${fmtMoney(v)}</span></div>`).join('');
+  } else {
+    $('yearIncomeCard').style.display = 'none';
+  }
 }
 $('yearPrev').addEventListener('click', () => { currentYear -= 1; loadYear(); });
 $('yearNext').addEventListener('click', () => { currentYear += 1; loadYear(); });
 
 // ---------- init ----------
 window.startEditById = startEditById;
+window.startEditIncomeById = startEditIncomeById;
 window.deleteExpense = deleteExpense;
+window.deleteIncome = deleteIncome;
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
 checkAuth().then((loggedIn) => { if (loggedIn) { loadDay(); loadMonth(); renderChips(); } });
