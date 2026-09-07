@@ -273,7 +273,15 @@ async function quickAddFrequent(f) {
 }
 
 // ---------- voice dictation ----------
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+// iOS standalone (home-screen) web apps don't reliably remember mic
+// permission across launches -- Safari re-prompts almost every time you
+// tap it, which Apple controls and no website can fix. The iPhone
+// keyboard's own dictation mic doesn't have that problem (it's a system
+// feature, not a website asking for the mic), and works at least as
+// well, so skip the in-page SpeechRecognition path there entirely and
+// point people at the keyboard instead.
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+const SpeechRecognition = !isIOS && (window.SpeechRecognition || window.webkitSpeechRecognition);
 let recognition = null;
 let recording = false;
 if (SpeechRecognition) {
