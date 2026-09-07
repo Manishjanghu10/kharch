@@ -181,6 +181,35 @@ $('exportCsvLink').addEventListener('click', async (e) => {
   downloadFile(`kharch-export-${todayStr()}.csv`, csv, 'text/csv');
 });
 
+$('importLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  $('importFileInput').click();
+});
+$('importFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = ''; // allow re-selecting the same file later
+  if (!file) return;
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+    if (!data || !Array.isArray(data.expenses)) throw new Error('not a Kharch export');
+  } catch (err) {
+    showToast("That doesn't look like a valid Kharch export file.");
+    return;
+  }
+  if (!data.expenses.length) { showToast('No expenses found in that file.'); return; }
+
+  const who = data.user ? `${data.user.name} (${data.user.email})` : 'unknown account';
+  const when = data.exported_at ? new Date(data.exported_at).toLocaleDateString() : 'an unknown date';
+  const ok = confirm(`Import ${data.expenses.length} expense(s) from a backup of ${who}, exported ${when}?\n\nThey'll be added to your current account on this device.`);
+  if (!ok) return;
+
+  const result = await DataStore.importExpenses(data.expenses);
+  showToast(`Imported ${result.added} expense${result.added === 1 ? '' : 's'}` +
+    (result.skipped ? `, skipped ${result.skipped} duplicate${result.skipped === 1 ? '' : 's'}.` : '.'));
+  loadDay(); loadMonth(); renderChips();
+});
+
 // ---------- frequent-expense quick-add chips ----------
 async function renderChips() {
   const frequent = await DataStore.getFrequent(5);

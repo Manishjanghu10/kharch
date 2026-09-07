@@ -252,7 +252,7 @@ function quickUnlockWithWebauthn(email) {
 
 // ---------- expenses ----------
 
-async function addExpense({ amount, category, payment_mode, note, raw_text, spent_date }) {
+async function addExpense({ amount, category, payment_mode, note, raw_text, spent_date, created_at }) {
   const userEmail = requireEmail();
   if (!(amount > 0)) throw new Error("Amount must be greater than zero.");
   const db = await openDb();
@@ -260,7 +260,7 @@ async function addExpense({ amount, category, payment_mode, note, raw_text, spen
     userEmail, amount, category, payment_mode,
     note: note || null, raw_text: raw_text || null,
     spentDate: spent_date || todayStr(),
-    createdAt: new Date().toISOString(),
+    createdAt: created_at || new Date().toISOString(),
   };
   const id = await reqToPromise(tx(db, "expenses", "readwrite").objectStore("expenses").add(record));
   return id;
@@ -456,6 +456,42 @@ async function exportAll() {
   return { user, expenses, exported_at: new Date().toISOString() };
 }
 
+function expenseDedupeKey(e) {
+  // created_at is a millisecond timestamp set once at creation, so it
+  // uniquely identifies the original record -- unlike the other fields,
+  // which two genuinely separate same-day purchases (e.g. two identical
+  // ₹50 teas) would share, wrongly making them look like re-imported
+  // duplicates of each other.
+  return e.created_at || [e.spent_date, e.amount, e.category, e.payment_mode, e.note || "", e.raw_text || ""].join("|");
+}
+
+// Adds expenses from a previously exported JSON file into the CURRENTLY
+// logged-in account on this device -- it does not switch accounts or
+// touch passwords (the export never contains those). Records identical to
+// ones already present (same date/amount/category/payment/note/raw_text)
+// are skipped so importing the same backup twice is harmless.
+async function importExpenses(expenses) {
+  const existing = await allExpensesForUser();
+  const seen = new Set(existing.map(expenseDedupeKey));
+  let added = 0, skipped = 0;
+  for (const e of expenses || []) {
+    const key = expenseDedupeKey(e);
+    if (seen.has(key)) { skipped++; continue; }
+    try {
+      await addExpense({
+        amount: e.amount, category: e.category, payment_mode: e.payment_mode,
+        note: e.note, raw_text: e.raw_text, spent_date: e.spent_date,
+        created_at: e.created_at,
+      });
+      seen.add(key);
+      added++;
+    } catch (err) {
+      skipped++;
+    }
+  }
+  return { added, skipped };
+}
+
 window.DataStore = {
   signup, login, logout, currentUser, resetPassword,
   addExpense, updateExpense, deleteExpense, getDay, getMonth, getYear, getTrend, getFrequent,
@@ -463,5 +499,5 @@ window.DataStore = {
   setBudget, deleteBudget, getBudgets, TOTAL_BUDGET_CATEGORY,
   lastEmail, quickUnlockInfo, setPin, clearPin, quickUnlockWithPin,
   setWebauthnCredential, clearWebauthnCredential, quickUnlockWithWebauthn,
-  exportAll,
+  exportAll, importExpenses,
 };

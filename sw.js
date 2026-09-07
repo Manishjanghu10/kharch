@@ -1,7 +1,7 @@
 /* App-shell service worker: caches everything needed to run with no
    network at all after the first visit. Cache-first, with a background
    refresh from the network when available. */
-const CACHE_NAME = 'kharch-v5';
+const CACHE_NAME = 'kharch-v6';
 const PRECACHE = [
   'index.html',
   'login.html',
